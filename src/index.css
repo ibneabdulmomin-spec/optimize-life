@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Hind+Siliguri:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-bengali: "Hind Siliguri", sans-serif;
+
+  --color-orbit-bg: #0D1B2A;
+  --color-orbit-card: #1B263B;
+  --color-orbit-accent: #10b981;
+  --color-orbit-text-primary: #ffffff;
+  --color-orbit-text-secondary: #94a3b8;
+  --color-glass-border: rgba(51, 65, 85, 0.5);
+  --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-card-hover: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+}
+
+.light-mode {
+  --color-orbit-bg: #F1F5F9;
+  --color-orbit-card: #FFFFFF;
+  --color-orbit-accent: #10b981;
+  --color-orbit-text-primary: #0F172A;
+  --color-orbit-text-secondary: #334155;
+  --color-glass-border: #E2E8F0;
+  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-card-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+}
+
+@layer base {
+  body {
+    @apply bg-[var(--color-orbit-bg)] text-[var(--color-orbit-text-primary)] antialiased selection:bg-emerald-500/30 selection:text-white transition-all duration-300;
+  }
+}
+
+@layer utilities {
+  .card-premium {
+    @apply bg-[var(--color-orbit-card)] border border-[var(--color-glass-border)] rounded-xl transition-all shadow-[var(--shadow-card)];
+  }
+  .card-premium:hover {
+    @apply shadow-[var(--shadow-card-hover)] border-[var(--color-orbit-accent)]/50;
+  }
+  .nav-header {
+    @apply bg-[var(--color-orbit-bg)] border-b border-[var(--color-glass-border)];
+  }
+  .nav-sidebar {
+    @apply bg-[var(--color-orbit-bg)] border-r border-[var(--color-glass-border)];
+  }
+  .nav-bottom {
+    @apply bg-[var(--color-orbit-bg)] border-t border-[var(--color-glass-border)];
+  }
+}
