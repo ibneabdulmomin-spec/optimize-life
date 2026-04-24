@@ -8,9 +8,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, ChangeEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
+
+declare global {
+  interface Window {
+    aistudio?: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
+
 import { 
   LucideIcon,
   LayoutDashboard, 
@@ -44,11 +54,13 @@ import {
   Trophy,
   ShieldCheck,
   Timer as TimerIcon,
-  BookOpen,
   Heart,
   Flame,
-  BarChart3
+  BarChart3,
+  BookOpen,
+  Database
 } from 'lucide-react';
+import { UserProfileMenu } from './components/UserProfileMenu';
 
 // --- Sidebar Component ---
 
@@ -86,7 +98,8 @@ const Sidebar = ({ activeTab, setActiveTab, userName }: { activeTab: string, set
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'routine', label: 'Routine', icon: Calendar },
     { id: 'vault', label: 'Vault', icon: Library },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'library', label: 'Library', icon: BookOpen },
+    { id: 'studio', label: 'Studio', icon: Video },
   ];
 
   return (
@@ -110,11 +123,8 @@ const Sidebar = ({ activeTab, setActiveTab, userName }: { activeTab: string, set
         ))}
       </nav>
 
-      <div className="mt-8 flex items-center gap-3 card-premium p-3">
-        <div className="w-7 h-7 rounded-md bg-[var(--color-orbit-accent)]/10 flex items-center justify-center border border-[var(--color-orbit-accent)]/20">
-           <User size={14} className="text-[var(--color-orbit-accent)]" />
-        </div>
-        <span className="text-[13px] font-bold text-[var(--color-orbit-text-primary)] truncate font-bengali">{userName}</span>
+      <div className="mt-8 flex flex-col gap-3 p-3">
+        {/* Profile moved to global UserProfileMenu overlay / dropdown in header */}
       </div>
     </aside>
   );
@@ -462,6 +472,13 @@ const RoutineItem = ({ title, meta, completed, onToggle, onDelete }: { title: st
   </motion.div>
 );
 
+const SUCCESS_SOUNDS = [
+  { id: 'zen', name: 'Zen Ding', url: 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3' },
+  { id: 'chime', name: 'Success Chime', url: 'https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3' },
+  { id: 'level', name: 'Level Up', url: 'https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3' },
+  { id: 'bell', name: 'Clear Bell', url: 'https://assets.mixkit.co/active_storage/sfx/1114/1114-preview.mp3' },
+];
+
 const SettingsContent = ({ 
   userName, 
   setUserName, 
@@ -475,9 +492,14 @@ const SettingsContent = ({
   setIsConfettiEnabled,
   isLightMode,
   setIsLightMode,
-  setToast
+  setToast,
+  wisdomSlides,
+  setWisdomSlides,
+  successSound,
+  setSuccessSound
 }: any) => {
   const [tempName, setTempName] = useState(userName);
+  const [activeSegment, setActiveSegment] = useState<'profile' | 'content' | 'data'>('profile');
 
   const saveProfile = () => {
     setUserName(tempName);
@@ -485,7 +507,7 @@ const SettingsContent = ({
   };
 
   const backupData = () => {
-    const data = JSON.stringify({ routines, resources, userName });
+    const data = JSON.stringify({ routines, resources, userName, wisdomSlides });
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -502,93 +524,286 @@ const SettingsContent = ({
     }
   };
 
+  const updateSlideContent = (id: number, content: string) => {
+    setWisdomSlides(wisdomSlides.map((slide: any) => 
+      slide.id === id ? { ...slide, content } : slide
+    ));
+  };
+
+  const CustomSwitch = ({ checked, onChange }: { checked: boolean, onChange: () => void }) => (
+    <div 
+      onClick={onChange}
+      className={`w-12 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-300 ease-in-out ${checked ? 'bg-[var(--color-orbit-accent)]' : 'bg-[var(--color-glass-border)]'}`}
+    >
+      <div 
+        className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ease-in-out ${checked ? 'translate-x-6' : 'translate-x-0'}`}
+      />
+    </div>
+  );
+
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8 max-w-2xl mx-auto pb-20">
-      <div className="card-premium p-8 space-y-6">
-        <h2 className="text-xl font-bold text-[var(--color-orbit-text-primary)] font-bengali">প্রোফাইল সেটিংস</h2>
-        <div className="flex gap-4">
-          <input 
-            value={tempName} 
-            onChange={e => setTempName(e.target.value)}
-            className="flex-1 bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl py-3 px-4 text-[14px] text-[var(--color-orbit-text-primary)] font-bengali shadow-sm focus:outline-none focus:border-[var(--color-orbit-accent)]"
-          />
-          <button onClick={saveProfile} className="px-6 py-3 bg-[var(--color-orbit-accent)] hover:opacity-90 text-white rounded-xl font-bold text-[13px] font-bengali shadow-md">সেভ করুন</button>
-        </div>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto pb-24 space-y-6">
+      
+      {/* Header */}
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold text-[var(--color-orbit-text-primary)] font-bengali flex items-center gap-3">
+          <Settings size={28} className="text-[var(--color-orbit-accent)]" />
+          সিস্টেম সেটিংস
+        </h2>
+        <p className="text-[14px] text-[var(--color-orbit-text-secondary)] mt-2">আপনার ড্যাশবোর্ড কাস্টমাইজ ও ডেটা ম্যানেজ করুন।</p>
       </div>
 
-      <div className="card-premium p-8 space-y-6">
-        <h2 className="text-xl font-bold text-[var(--color-orbit-text-primary)] font-bengali">কন্টেন্ট ম্যানেজমেন্ট</h2>
-        
-        <div className="space-y-4">
-          <h3 className="text-sm font-bold text-[var(--color-orbit-text-secondary)] font-bengali">রুটিন (Daily Routines)</h3>
-          {routines.map((r: any) => (
-            <div key={r.id} className="flex justify-between items-center p-4 bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-lg">
-              <span className="font-bengali text-[13px] text-[var(--color-orbit-text-primary)]">{r.title}</span>
-              <button className="text-red-400 hover:text-red-600 p-1" onClick={() => deleteRoutine(r.id)}><Trash2 size={16} /></button>
+      {/* Segmented Control */}
+      <div className="flex gap-2 p-1 bg-[var(--color-orbit-bg)] rounded-xl border border-[var(--color-glass-border)] overflow-x-auto overflow-y-hidden no-scrollbar">
+        {[
+          { id: 'profile', label: 'প্রোফাইল ও থিম', icon: User },
+          { id: 'content', label: 'কন্টেন্ট এডিট', icon: Palette },
+          { id: 'data', label: 'ডেটা ব্যাকআপ', icon: Database }
+        ].map(segment => (
+          <button
+            key={segment.id}
+            onClick={() => setActiveSegment(segment.id as any)}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg font-bold text-[13px] whitespace-nowrap transition-all ${
+              activeSegment === segment.id 
+                ? 'bg-[var(--color-orbit-accent)] text-white shadow-md' 
+                : 'text-[var(--color-orbit-text-secondary)] hover:bg-[var(--color-glass-border)]'
+            }`}
+          >
+            <segment.icon size={14} />
+            {segment.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Profile & Theme Segment */}
+      {activeSegment === 'profile' && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+          <div className="card-premium p-6 sm:p-8 rounded-2xl">
+            <h3 className="text-[12px] uppercase tracking-widest text-[var(--color-orbit-text-secondary)] font-bold mb-4">আপনার পরিচয়</h3>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <input 
+                value={tempName} 
+                onChange={e => setTempName(e.target.value)}
+                placeholder="আপনার নাম লিখুন"
+                className="flex-1 bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl py-3 px-4 text-[15px] text-[var(--color-orbit-text-primary)] font-bengali focus:outline-none focus:border-[var(--color-orbit-accent)] transition-all"
+              />
+              <button 
+                onClick={saveProfile} 
+                disabled={tempName === userName}
+                className={`px-8 py-3 rounded-xl font-bold text-[14px] font-bengali transition-all shadow-sm flex items-center justify-center gap-2 ${
+                  tempName === userName 
+                    ? 'bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] text-[var(--color-orbit-text-secondary)] cursor-not-allowed'
+                    : 'bg-[var(--color-orbit-accent)] text-white hover:opacity-90 active:scale-95'
+                }`}
+              >
+                <Check size={16} /> সেভ
+              </button>
             </div>
-          ))}
-        </div>
+          </div>
 
-        <div className="space-y-4 pt-4 border-t border-[var(--color-glass-border)]">
-          <h3 className="text-sm font-bold text-[var(--color-orbit-text-secondary)] font-bengali">রিসোর্স (Vault Resources)</h3>
-          {resources.map((r: any) => (
-            <div key={r.id} className="flex justify-between items-center p-4 bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-lg">
-              <span className="font-bengali text-[13px] text-[var(--color-orbit-text-primary)]">{r.title}</span>
-              <button className="text-red-400 hover:text-red-600 p-1" onClick={() => setResources(resources.filter((res: any) => res.id !== r.id))}><Trash2 size={16} /></button>
+          <div className="card-premium p-6 sm:p-8 rounded-2xl space-y-6">
+            <h3 className="text-[12px] uppercase tracking-widest text-[var(--color-orbit-text-secondary)] font-bold mb-6">অ্যাপ প্রেফারেন্স</h3>
+            
+            <div className="flex justify-between items-center py-2">
+              <div>
+                <h4 className="font-bengali font-bold text-[var(--color-orbit-text-primary)]">ডার্ক মোড</h4>
+                <p className="text-[12px] text-[var(--color-orbit-text-secondary)] mt-1">অন্ধকারে চোখের শান্তির জন্য</p>
+              </div>
+              <CustomSwitch checked={!isLightMode} onChange={() => setIsLightMode(!isLightMode)} />
             </div>
-          ))}
-        </div>
-      </div>
+            
+            <div className="h-px w-full bg-[var(--color-glass-border)] opacity-50" />
+            
+            <div className="flex justify-between items-center py-2">
+              <div>
+                <h4 className="font-bengali font-bold text-[var(--color-orbit-text-primary)]">সাফল্যের শব্দ</h4>
+                <p className="text-[12px] text-[var(--color-orbit-text-secondary)] mt-1">টাস্ক কমপ্লিট করার শব্দ (Ting!)</p>
+              </div>
+              <CustomSwitch checked={isSoundEnabled} onChange={() => setIsSoundEnabled(!isSoundEnabled)} />
+            </div>
 
-      <div className="card-premium p-8 space-y-6">
-        <h2 className="text-xl font-bold text-[var(--color-orbit-text-primary)] font-bengali">প্রেফারেন্স</h2>
-        <div className="space-y-6">
-          <label className="flex justify-between items-center cursor-pointer p-4 bg-[var(--color-orbit-bg)] rounded-xl border border-[var(--color-glass-border)]">
-            <span className="font-bengali font-medium">সাফল্যের শব্দ (Completion Sound)</span>
-            <input type="checkbox" className="w-5 h-5 accent-emerald-500" checked={isSoundEnabled} onChange={e => setIsSoundEnabled(e.target.checked)} />
-          </label>
-          <label className="flex justify-between items-center cursor-pointer p-4 bg-[var(--color-orbit-bg)] rounded-xl border border-[var(--color-glass-border)]">
-            <span className="font-bengali font-medium">অ্যানিমেশন (Confetti Effect)</span>
-            <input type="checkbox" className="w-5 h-5 accent-emerald-500" checked={isConfettiEnabled} onChange={e => setIsConfettiEnabled(e.target.checked)} />
-          </label>
-          <label className="flex justify-between items-center cursor-pointer p-4 bg-[var(--color-orbit-bg)] rounded-xl border border-[var(--color-glass-border)]">
-            <span className="font-bengali font-medium">ডার্ক মোড (Dark Mode Toggle)</span>
-            <input type="checkbox" className="w-5 h-5 accent-emerald-500" checked={!isLightMode} onChange={e => setIsLightMode(!e.target.checked)} />
-          </label>
-        </div>
-      </div>
+            {isSoundEnabled && (
+              <div className="mt-2 pl-4 border-l-2 border-[var(--color-glass-border)]">
+                <p className="text-[11px] font-bold text-[var(--color-orbit-text-secondary)] uppercase tracking-wider mb-3">সাউন্ড নির্বাচন করুন</p>
+                <div className="flex flex-wrap gap-2">
+                  {SUCCESS_SOUNDS.map(sound => (
+                    <button
+                      key={sound.id}
+                      onClick={() => {
+                        setSuccessSound(sound.url);
+                        const audio = new Audio(sound.url);
+                        audio.volume = 0.4;
+                        audio.play().catch(() => {});
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all border ${
+                        successSound === sound.url 
+                          ? 'bg-[var(--color-orbit-accent)] text-white border-[var(--color-orbit-accent)] shadow-sm'
+                          : 'bg-[var(--color-orbit-bg)] text-[var(--color-orbit-text-secondary)] border-[var(--color-glass-border)] hover:border-[var(--color-orbit-accent)]/50'
+                      }`}
+                    >
+                      {sound.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
-      <div className="flex gap-4">
-        <button onClick={backupData} className="flex-1 py-4 bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] text-[var(--color-orbit-text-primary)] rounded-xl font-bold font-bengali hover:bg-[var(--color-glass-border)] transition-all shadow-sm">ব্যাকআপ ডেটা</button>
-        <button onClick={clearAll} className="flex-1 py-4 bg-red-600/90 hover:bg-red-600 text-white rounded-xl font-bold font-bengali shadow-md transition-all">সব ডেটা মুছুন</button>
-      </div>
+            <div className="h-px w-full bg-[var(--color-glass-border)] opacity-50" />
+
+            <div className="flex justify-between items-center py-2">
+              <div>
+                <h4 className="font-bengali font-bold text-[var(--color-orbit-text-primary)]">অ্যানিমেশন (Confetti)</h4>
+                <p className="text-[12px] text-[var(--color-orbit-text-secondary)] mt-1">সব কাজ শেষ হলে সেলিব্রেশন</p>
+              </div>
+              <CustomSwitch checked={isConfettiEnabled} onChange={() => setIsConfettiEnabled(!isConfettiEnabled)} />
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Content Edit Segment */}
+      {activeSegment === 'content' && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+          <div className="card-premium p-6 sm:p-8 rounded-2xl">
+            <h3 className="text-[12px] uppercase tracking-widest text-[var(--color-orbit-accent)] font-bold mb-6 flex items-center gap-2">
+              <Quote size={14} /> উক্তি ও বাণী (Wisdom Slides)
+            </h3>
+            <div className="space-y-6">
+              {wisdomSlides?.map((slide: any, index: number) => (
+                <div key={slide.id} className="relative group p-5 bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl space-y-4 hover:border-[var(--color-orbit-accent)]/50 transition-all">
+                  <div className="absolute top-0 right-0 bg-[var(--color-orbit-accent)]/10 text-[var(--color-orbit-accent)] text-[10px] font-bold px-2 py-1 rounded-bl-lg rounded-tr-xl">
+                    Slide {index + 1}
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-[var(--color-orbit-text-secondary)] uppercase font-bold tracking-wider ml-1">ক্যাটাগরি</label>
+                    <input
+                      type="text"
+                      value={slide.category}
+                      onChange={e => setWisdomSlides(wisdomSlides.map((s: any) => s.id === slide.id ? { ...s, category: e.target.value } : s))}
+                      className="w-full bg-transparent border-b border-[var(--color-glass-border)] focus:border-[var(--color-orbit-accent)] p-2 text-[13px] font-bold text-[var(--color-orbit-text-primary)] outline-none mt-1 transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-[var(--color-orbit-text-secondary)] uppercase font-bold tracking-wider ml-1">বাণী বা বক্তব্য</label>
+                    <textarea
+                      value={slide.content}
+                      onChange={e => updateSlideContent(slide.id, e.target.value)}
+                      className="w-full bg-black/10 border border-[var(--color-glass-border)] focus:border-[var(--color-orbit-accent)] rounded-lg p-3 text-[14px] text-[var(--color-orbit-text-primary)] outline-none mt-1 min-h-[80px] font-bengali resize-y transition-colors leading-relaxed"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-[var(--color-orbit-text-secondary)] uppercase font-bold tracking-wider ml-1">বটম লেবেল</label>
+                    <input
+                      type="text"
+                      value={slide.label}
+                      onChange={e => setWisdomSlides(wisdomSlides.map((s: any) => s.id === slide.id ? { ...s, label: e.target.value } : s))}
+                      className="w-full bg-transparent border-b border-[var(--color-glass-border)] focus:border-[var(--color-orbit-accent)] p-2 text-[12px] text-[var(--color-orbit-text-primary)] tracking-widest font-bold outline-none mt-1 transition-colors"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="card-premium p-6 rounded-2xl">
+              <h3 className="text-[12px] uppercase tracking-widest text-[var(--color-orbit-text-secondary)] font-bold mb-4">ডেইলি রুটিন মুছুন</h3>
+              {routines.length === 0 ? <p className="text-[12px] text-[var(--color-orbit-text-secondary)]">কোনো রুটিন নেই।</p> : (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                  {routines.map((r: any) => (
+                    <div key={r.id} className="flex justify-between items-center p-3 bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-lg group">
+                      <span className="font-bengali text-[12px] text-[var(--color-orbit-text-primary)] line-clamp-1 flex-1 px-2">{r.title}</span>
+                      <button className="text-[var(--color-orbit-text-secondary)] hover:text-red-500 p-1 opacity-50 group-hover:opacity-100 transition-all" onClick={() => deleteRoutine(r.id)}><Trash2 size={14} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="card-premium p-6 rounded-2xl">
+              <h3 className="text-[12px] uppercase tracking-widest text-[var(--color-orbit-text-secondary)] font-bold mb-4">ভল্ট রিসোর্স মুছুন</h3>
+              {resources.length === 0 ? <p className="text-[12px] text-[var(--color-orbit-text-secondary)]">কোনো রিসোর্স নেই।</p> : (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                  {resources.map((r: any) => (
+                    <div key={r.id} className="flex justify-between items-center p-3 bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-lg group">
+                      <span className="font-bengali text-[12px] text-[var(--color-orbit-text-primary)] line-clamp-1 flex-1 px-2">{r.title}</span>
+                      <button className="text-[var(--color-orbit-text-secondary)] hover:text-red-500 p-1 opacity-50 group-hover:opacity-100 transition-all" onClick={() => setResources(resources.filter((res: any) => res.id !== r.id))}><Trash2 size={14} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Data Segment */}
+      {activeSegment === 'data' && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+          <div className="card-premium p-6 sm:p-8 rounded-2xl border border-[var(--color-glass-border)]">
+            <div className="flex items-start gap-4 mb-6">
+              <div className="w-10 h-10 rounded-full bg-[var(--color-orbit-accent)]/10 flex items-center justify-center shrink-0">
+                <Database size={20} className="text-[var(--color-orbit-accent)]" />
+              </div>
+              <div>
+                <h3 className="text-[16px] font-bold text-[var(--color-orbit-text-primary)]">ডেটা ব্যাকআপ</h3>
+                <p className="text-[13px] text-[var(--color-orbit-text-secondary)] mt-1">আপনার সব রুটিন, রিসোর্স, উক্তি এবং প্রেফারেন্স একটি JSON ফাইল হিসেবে ডাউনলোড করে সেভ করে রাখতে পারেন।</p>
+              </div>
+            </div>
+            <button onClick={backupData} className="w-full py-4 bg-[var(--color-orbit-bg)] border border-[var(--color-orbit-accent)]/30 text-[var(--color-orbit-text-primary)] rounded-xl font-bold font-bengali hover:bg-[var(--color-orbit-accent)]/10 transition-all shadow-sm">
+              JSON ব্যাকআপ ডাউনলোড করুন
+            </button>
+          </div>
+
+          <div className="card-premium p-6 sm:p-8 rounded-2xl border border-red-500/20 bg-red-500/5">
+            <div className="flex items-start gap-4 mb-6">
+              <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+                <Trash2 size={20} className="text-red-500" />
+              </div>
+              <div>
+                <h3 className="text-[16px] font-bold text-red-500">ডেটা রিসেট বা মুছুন</h3>
+                <p className="text-[13px] text-[var(--color-orbit-text-secondary)] mt-1">এটি আপনার লোকাল স্টোরেজ থেকে সব ডেটা সম্পূর্ণ মুছে ফেলবে। এই কাজটি আর ফিরে পাওয়া যাবে না।</p>
+              </div>
+            </div>
+            <button onClick={clearAll} className="w-full py-4 bg-red-600/90 hover:bg-red-600 text-white rounded-xl font-bold font-bengali shadow-md transition-all">
+              সব ডেটা পার্মানেন্টলি মুছুন
+            </button>
+          </div>
+        </motion.div>
+      )}
+
     </motion.div>
   );
 };
 
-const wisdomSlides = [
+export const DEFAULT_WISDOM_SLIDES = [
   {
     id: 1,
     category: 'Wisdom & Mindset',
     content: "consistency is key: maintaining continuity will lead you to success.",
-    icon: Sparkles,
+    iconName: 'Sparkles',
     label: 'Daily Propulsion'
   },
   {
     id: 2,
     category: 'Success Strategy',
     content: "ধারাবাহিকতা মানেই বিরতিহীন প্রচেষ্টা, আর এটিই আপনাকে সফলতার চূড়ায় পৌঁছে দেবে।",
-    icon: Target,
+    iconName: 'Target',
     label: 'Action Strategy'
   },
   {
     id: 3,
     category: 'Daily Growth',
     content: "Success is the sum of small efforts, repeated day in and day out.",
-    icon: Trophy,
+    iconName: 'Trophy',
     label: 'Growth Protocol'
   }
 ];
+
+const getIconByName = (name: string) => {
+  const map: Record<string, any> = { Sparkles, Target, Trophy, Quote, Star, Zap, Check, ShieldCheck, BookOpen, QuoteIcon: Quote };
+  return map[name] || Sparkles;
+};
 
 const SpiritualHub = ({ salah, setSalah, quran, setQuran }: any) => (
   <div className="card-premium p-6 col-span-1">
@@ -656,10 +871,15 @@ const WeeklySummary = () => (
     <div className="text-[10px] text-[var(--color-orbit-text-secondary)] mt-1 font-bold">+50% vs LAST WEEK</div>
   </div>
 );
-const DashboardContent = ({ priorities, routines, togglePriority, toggleRoutine, deleteRoutine, onOpenModal, setToast, isSoundEnabled, salah, setSalah, quran, setQuran, gratitude, setGratitude, streak }: any) => {
+const DashboardContent = ({ priorities, routines, togglePriority, toggleRoutine, deleteRoutine, onOpenModal, setToast, isSoundEnabled, salah, setSalah, quran, setQuran, gratitude, setGratitude, streak, exercise, setExercise, wisdomSlides }: any) => {
   const [activeSlide, setActiveSlide] = useState(0);
   const [timerActive, setTimerActive] = useState(false);
   const [duration, setDuration] = useState(25); // Default 25 mins
+  
+  const toggleExercise = () => {
+    const today = new Date().toDateString();
+    setExercise({ completed: !exercise.completed, date: today });
+  };
   const [timeLeft, setTimeLeft] = useState(duration * 60);
 
   useEffect(() => {
@@ -669,11 +889,12 @@ const DashboardContent = ({ priorities, routines, togglePriority, toggleRoutine,
   }, [duration, timerActive]);
 
   useEffect(() => {
+    if (!wisdomSlides || wisdomSlides.length === 0) return;
     const slideTimer = setInterval(() => {
       setActiveSlide((prev) => (prev + 1) % wisdomSlides.length);
     }, 10000);
     return () => clearInterval(slideTimer);
-  }, []);
+  }, [wisdomSlides]);
 
   useEffect(() => {
     let interval: any;
@@ -709,7 +930,8 @@ const DashboardContent = ({ priorities, routines, togglePriority, toggleRoutine,
 
   const progress = (((duration * 60) - timeLeft) / (duration * 60)) * 100;
 
-  const slide = wisdomSlides[activeSlide];
+  const slide = wisdomSlides && wisdomSlides.length ? wisdomSlides[activeSlide] : null;
+  const SlideIcon = slide ? getIconByName(slide.iconName) : null;
 
   return (
     <motion.div 
@@ -719,47 +941,49 @@ const DashboardContent = ({ priorities, routines, togglePriority, toggleRoutine,
     >
       <div className="lg:col-span-2 space-y-8">
         {/* Mindset & Wisdom Slideshow Section */}
-        <section>
-          <div className="card-premium p-6 md:p-8 relative overflow-hidden group min-h-[180px] flex flex-col justify-center">
-            {/* Background Icon Decoration */}
-            <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-              <slide.icon size={120} className="text-[var(--color-orbit-accent)]" />
-            </div>
+        {slide && SlideIcon && (
+          <section>
+            <div className="card-premium p-4 md:p-6 relative overflow-hidden group min-h-[140px] flex flex-col justify-center">
+              {/* Background Icon Decoration */}
+              <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                <SlideIcon size={100} className="text-[var(--color-orbit-accent)]" />
+              </div>
 
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={slide.id}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.5, ease: "easeInOut" }}
-                className="relative z-10 space-y-4"
-              >
-                <div className="flex items-center gap-2 text-[10px] font-bold text-[var(--color-orbit-accent)] uppercase tracking-[0.2em]">
-                  <slide.icon size={12} />
-                  {slide.category}
-                </div>
-                <p className="text-xl md:text-2xl font-bold text-[var(--color-orbit-text-primary)] tracking-tight leading-tight italic decoration-[var(--color-orbit-accent)]/30 underline-offset-8 decoration-2 font-bengali">
-                  "{slide.content}"
-                </p>
-                <div className="pt-4 flex items-center gap-4 text-[var(--color-orbit-text-secondary)]">
-                  <div className="h-px flex-1 bg-[var(--color-glass-border)]" />
-                  <span className="text-[9px] uppercase tracking-widest font-bold">{slide.label}</span>
-                </div>
-              </motion.div>
-            </AnimatePresence>
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={slide.id}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.5, ease: "easeInOut" }}
+                  className="relative z-10 space-y-3"
+                >
+                  <div className="flex items-center gap-2 text-[10px] font-bold text-[var(--color-orbit-accent)] uppercase tracking-[0.2em]">
+                    <SlideIcon size={12} />
+                    {slide.category}
+                  </div>
+                  <p className="text-lg md:text-xl font-bold text-[var(--color-orbit-text-primary)] tracking-tight leading-tight italic decoration-[var(--color-orbit-accent)]/30 underline-offset-8 decoration-2 font-bengali">
+                    "{slide.content}"
+                  </p>
+                  <div className="pt-2 flex items-center gap-4 text-[var(--color-orbit-text-secondary)]">
+                    <div className="h-px w-8 bg-[var(--color-glass-border)]" />
+                    <span className="text-[9px] uppercase tracking-widest font-bold">{slide.label}</span>
+                  </div>
+                </motion.div>
+              </AnimatePresence>
 
-            {/* Pagination Dots */}
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 z-20">
-              {wisdomSlides.map((_, idx) => (
-                <div 
-                  key={idx} 
-                  className={`h-1 rounded-full transition-all duration-300 ${activeSlide === idx ? 'w-4 bg-[var(--color-orbit-accent)]' : 'w-1.5 bg-[var(--color-orbit-text-secondary)]/30'}`} 
-                />
-              ))}
+              {/* Pagination Dots */}
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5 z-20">
+                {wisdomSlides.map((_: any, idx: number) => (
+                  <div 
+                    key={idx} 
+                    className={`h-1 rounded-full transition-all duration-300 ${activeSlide === idx ? 'w-4 bg-[var(--color-orbit-accent)]' : 'w-1.5 bg-[var(--color-orbit-text-secondary)]/30'}`} 
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* Top 3 Priorities Section */}
         <section>
@@ -886,6 +1110,21 @@ const DashboardContent = ({ priorities, routines, togglePriority, toggleRoutine,
           </div>
 
           <div className="card-premium p-6 space-y-4">
+            <h3 className="text-[10px] uppercase tracking-widest text-[var(--color-orbit-text-secondary)] font-bold">10 Min Daily Exercise</h3>
+            <button
+              onClick={toggleExercise}
+              className={`w-full py-3 rounded-xl flex items-center justify-between px-4 transition-all ${exercise.completed ? 'bg-green-500/10 border border-green-500/30' : 'bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)]'}`}
+            >
+              <span className={`text-[13px] font-bold ${exercise.completed ? 'text-green-400' : 'text-[var(--color-orbit-text-secondary)]'}`}>
+                {exercise.completed ? 'Completed! Great work!' : 'Mark as Done'}
+              </span>
+              <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${exercise.completed ? 'border-green-500 bg-green-500' : 'border-[var(--color-orbit-text-secondary)]'}`}>
+                {exercise.completed && <Check className="text-white" size={12} />}
+              </div>
+            </button>
+          </div>
+
+          <div className="card-premium p-6 space-y-4">
             <h3 className="text-[10px] uppercase tracking-widest text-[var(--color-orbit-text-secondary)] font-bold">Quick Vault</h3>
             <div className="flex flex-wrap gap-2">
               {['Project: Orion', 'Assets', 'Q4 Strategy'].map(pill => (
@@ -968,6 +1207,8 @@ interface Resource {
   category: string;
   tags: string[];
   thumbnail: string;
+  url?: string;
+  description?: string;
 }
 
 const VaultContent = ({ resources, onSummarize }: { resources: Resource[], onSummarize: (text: string) => void }) => {
@@ -976,9 +1217,12 @@ const VaultContent = ({ resources, onSummarize }: { resources: Resource[], onSum
   
   const categories = [
     { name: 'All', icon: Library },
-    { name: 'Graphic Design', icon: Palette },
-    { name: 'Video Editing', icon: Video },
-    { name: 'Dev', icon: Code }
+    { name: 'Business', icon: BarChart3 },
+    { name: 'Analytics', icon: Search },
+    { name: 'Productivity', icon: Check },
+    { name: 'Web', icon: Code },
+    { name: 'Development', icon: Code },
+    { name: 'AI', icon: Sparkles }
   ];
   
   const filteredResources = [...resources]
@@ -986,8 +1230,12 @@ const VaultContent = ({ resources, onSummarize }: { resources: Resource[], onSum
     .sort((a, b) => {
       if (sortBy === 'title') {
         return a.title.localeCompare(b.title);
+      } else if (sortBy === 'title-desc') {
+        return b.title.localeCompare(a.title);
       } else if (sortBy === 'category') {
         return a.category.localeCompare(b.category);
+      } else if (sortBy === 'category-desc') {
+        return b.category.localeCompare(a.category);
       } else {
         // Fallback for 'date', assuming larger id means newer, or use string sorting if date is present.
         return b.id - a.id; 
@@ -1029,45 +1277,51 @@ const VaultContent = ({ resources, onSummarize }: { resources: Resource[], onSum
           >
             <option value="date">Date Added</option>
             <option value="title">Title (A-Z)</option>
-            <option value="category">Category</option>
+            <option value="title-desc">Title (Z-A)</option>
+            <option value="category">Category (A-Z)</option>
+            <option value="category-desc">Category (Z-A)</option>
           </select>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
         {filteredResources.map((res) => (
           <motion.div 
             layout
             key={res.id}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            whileHover={{ scale: 1.03, y: -5 }}                
-            className="card-premium group overflow-hidden flex flex-col"
+            whileHover={{ scale: 1.02, y: -2 }}                
+            className="card-premium group overflow-hidden flex flex-col cursor-pointer relative"
+            onClick={() => { if(res.url) window.open(res.url, '_blank') }}
+            title={res.description}
           >
-            <div className="relative h-40 overflow-hidden bg-[var(--color-orbit-bg)]">
+            <div className="relative h-20 sm:h-24 overflow-hidden bg-[var(--color-orbit-bg)]">
               <img 
                 src={res.thumbnail} 
                 alt={res.title} 
                 referrerPolicy="no-referrer"
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90" 
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-80" 
               />
-              <div className="absolute top-3 right-3 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all">
-                <button title="View Link" className="p-1.5 bg-black/50 backdrop-blur-md rounded text-white/80 hover:text-white border border-white/20">
-                  <ExternalLink size={14} />
-                </button>
-                <button onClick={() => onSummarize(`Resource: ${res.title}\nCategory: ${res.category}\nTags: ${res.tags.join(', ')}`)} title="AI Summary" className="p-1.5 bg-[var(--color-orbit-accent)]/80 backdrop-blur-md rounded text-white hover:bg-[var(--color-orbit-accent)] border border-[var(--color-orbit-accent)] shadow-lg transform transition active:scale-95">
-                  <Sparkles size={14} />
+              <div className="absolute top-2 right-2 flex gap-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all">
+                <button 
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    onSummarize(`Please summarize this resource in Bangla (title, description, tags, category):\n\nResource: ${res.title}\nDescription: ${res.description || ''}\nCategory: ${res.category}\nTags: ${res.tags.join(', ')}`);
+                  }} 
+                  title="AI Summary" 
+                  className="p-1 bg-[var(--color-orbit-accent)]/90 backdrop-blur-md rounded text-white shadow-sm"
+                >
+                  <Sparkles size={12} />
                 </button>
               </div>
             </div>
-            <div className="p-5 flex-1 flex flex-col justify-between">
-              <div>
-                <span className="text-[9px] font-bold text-[var(--color-orbit-accent)] uppercase tracking-widest mb-1.5 block">{res.category}</span>
-                <h3 className="text-[15px] font-bold text-[var(--color-orbit-text-primary)] mb-3 line-clamp-1 tracking-tight">{res.title}</h3>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {res.tags.map(tag => (
-                  <span key={tag} className="text-[9px] text-[var(--color-orbit-text-secondary)] font-bold px-1.5 py-0.5 bg-[var(--color-orbit-bg)] rounded border border-[var(--color-glass-border)] uppercase tracking-wider">
+            <div className="p-3 sm:p-4 flex-1 flex flex-col">
+              <span className="text-[8px] font-bold text-[var(--color-orbit-accent)] uppercase tracking-widest mb-1 block">{res.category}</span>
+              <h3 className="text-[12px] sm:text-[13px] font-bold text-[var(--color-orbit-text-primary)] mb-2 line-clamp-2 tracking-tight leading-snug">{res.title}</h3>
+              <div className="flex flex-wrap gap-1 mt-auto">
+                {res.tags.slice(0, 2).map(tag => (
+                  <span key={tag} className="text-[8px] text-[var(--color-orbit-text-secondary)] font-bold px-1.5 py-0.5 bg-[var(--color-orbit-bg)] rounded border border-[var(--color-glass-border)] uppercase tracking-wider">
                     {tag}
                   </span>
                 ))}
@@ -1091,7 +1345,7 @@ interface CreateActionModalProps {
 
 const CreateActionModal = ({ isOpen, onClose, onAddResource, onAddRoutine }: CreateActionModalProps) => {
   const [activeTab, setActiveTab] = useState<'routine' | 'resource'>('routine');
-  const [resourceForm, setResourceForm] = useState({ url: '', title: '', category: 'Dev', tags: '' });
+  const [resourceForm, setResourceForm] = useState({ url: '', title: '', category: 'Productivity', tags: '', thumbnail: '' });
   const [routineForm, setRoutineForm] = useState({ title: '', meta: '' });
 
   if (!isOpen) return null;
@@ -1162,35 +1416,203 @@ const CreateActionModal = ({ isOpen, onClose, onAddResource, onAddRoutine }: Cre
                 <button type="submit" className="w-full py-4 bg-[var(--color-orbit-accent)] hover:opacity-90 text-white rounded-xl font-bold text-[14px] shadow-md transition-all active:scale-[0.98] mt-4 font-bengali">রুটিনে সেভ করুন</button>
               </form>
             ) : (
-              <form className="space-y-5" onSubmit={(e) => {
+              <form className="space-y-4" onSubmit={(e) => {
                 e.preventDefault();
                 onAddResource(resourceForm);
-                setResourceForm({ url: '', title: '', category: 'Dev', tags: '' });
+                setResourceForm({ url: '', title: '', category: 'Productivity', tags: '', thumbnail: '' });
                 onClose();
               }}>
                 <div className="space-y-2 font-bengali">
-                  <label className="text-[10px] font-bold text-[var(--color-orbit-text-secondary)] uppercase tracking-widest ml-1">রিসোর্স টাইটেল (Title)</label>
-                  <input required placeholder="উদা: মডার্ন ডিজাইন টুলকিট" className="w-full bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl py-3.5 px-6 text-[13px] text-[var(--color-orbit-text-primary)] placeholder:text-[var(--color-orbit-text-secondary)] focus:outline-none focus:border-[var(--color-orbit-accent)] font-bengali shadow-sm transition-all" value={resourceForm.title} onChange={e => setResourceForm({ ...resourceForm, title: e.target.value })} />
+                  <label className="text-[10px] font-bold text-[var(--color-orbit-text-secondary)] uppercase tracking-widest ml-1">রিসোর্স টাইটেল (Title) *</label>
+                  <input required placeholder="উদা: মডার্ন ডিজাইন টুলকিট" className="w-full bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl py-3 px-5 text-[13px] text-[var(--color-orbit-text-primary)] placeholder:text-[var(--color-orbit-text-secondary)] focus:outline-none focus:border-[var(--color-orbit-accent)] font-bengali shadow-sm transition-all" value={resourceForm.title} onChange={e => setResourceForm({ ...resourceForm, title: e.target.value })} />
+                </div>
+                <div className="space-y-2 font-bengali">
+                  <label className="text-[10px] font-bold text-[var(--color-orbit-text-secondary)] uppercase tracking-widest ml-1">লিংক (URL)</label>
+                  <input type="url" placeholder="https://" className="w-full bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl py-3 px-5 text-[13px] text-[var(--color-orbit-text-primary)] placeholder:text-[var(--color-orbit-text-secondary)] focus:outline-none focus:border-[var(--color-orbit-accent)] font-sans shadow-sm transition-all" value={resourceForm.url} onChange={e => setResourceForm({ ...resourceForm, url: e.target.value })} />
+                </div>
+                <div className="space-y-2 font-bengali">
+                  <label className="text-[10px] font-bold text-[var(--color-orbit-text-secondary)] uppercase tracking-widest ml-1">থাম্বনেইল ইমেজ লিংক (ঐচ্ছিক)</label>
+                  <input type="url" placeholder="https://image-url.com/img.png (ফাঁকা রাখলে অটো জেনারেট হবে)" className="w-full bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl py-3 px-5 text-[13px] text-[var(--color-orbit-text-primary)] placeholder:text-[var(--color-orbit-text-secondary)] focus:outline-none focus:border-[var(--color-orbit-accent)] font-sans shadow-sm transition-all" value={resourceForm.thumbnail} onChange={e => setResourceForm({ ...resourceForm, thumbnail: e.target.value })} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2 font-bengali">
                     <label className="text-[10px] font-bold text-[var(--color-orbit-text-secondary)] uppercase tracking-widest ml-1">টাইপ (Type)</label>
-                    <select className="w-full bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl py-3.5 px-4 text-[13px] text-[var(--color-orbit-text-primary)] cursor-pointer font-bengali transition-all shadow-sm" value={resourceForm.category} onChange={e => setResourceForm({ ...resourceForm, category: e.target.value })}>
-                      {['Dev', 'Graphic Design', 'Video Editing'].map(c => <option key={c} value={c}>{c}</option>)}
+                    <select className="w-full bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl py-3 px-4 text-[13px] text-[var(--color-orbit-text-primary)] cursor-pointer font-bengali transition-all shadow-sm" value={resourceForm.category} onChange={e => setResourceForm({ ...resourceForm, category: e.target.value })}>
+                      {['Business', 'Analytics', 'Productivity', 'Web', 'Development', 'AI', 'Design'].map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div className="space-y-2 font-bengali">
                      <label className="text-[10px] font-bold text-[var(--color-orbit-text-secondary)] uppercase tracking-widest ml-1">ট্যাগ (Tags)</label>
-                     <input placeholder="#tag" className="w-full bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl py-3.5 px-4 text-[13px] text-[var(--color-orbit-text-primary)] placeholder:text-[var(--color-orbit-text-secondary)] focus:outline-none focus:border-[var(--color-orbit-accent)] font-bengali shadow-sm transition-all" value={resourceForm.tags} onChange={e => setResourceForm({ ...resourceForm, tags: e.target.value })} />
+                     <input placeholder="#tag1 #tag2" className="w-full bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] rounded-xl py-3 px-4 text-[13px] text-[var(--color-orbit-text-primary)] placeholder:text-[var(--color-orbit-text-secondary)] focus:outline-none focus:border-[var(--color-orbit-accent)] font-sans shadow-sm transition-all" value={resourceForm.tags} onChange={e => setResourceForm({ ...resourceForm, tags: e.target.value })} />
                   </div>
                 </div>
-                <button type="submit" className="w-full py-4 bg-[var(--color-orbit-accent)] hover:opacity-90 text-white rounded-xl font-bold text-[14px] shadow-md mt-4 font-bengali transition-all active:scale-[0.98]">লাইব্রেরিতে সেভ করুন</button>
+                <button type="submit" className="w-full py-3.5 bg-[var(--color-orbit-accent)] hover:opacity-90 text-white rounded-xl font-bold text-[14px] shadow-md mt-4 font-bengali transition-all active:scale-[0.98]">লাইব্রেরিতে সেভ করুন</button>
               </form>
             )}
            </div>
         </motion.div>
       </div>
     </AnimatePresence>
+  );
+};
+
+// --- Components ---
+
+const BOOKS = [
+  { id: '1', title: 'Atomic Habits', author: 'James Clear', category: 'Productivity', description: 'রাতারাতি বড় কোনো পরিবর্তন আনার চেষ্টা না করে, প্রতিদিন যদি মাত্র ১% ছোট ছোট ভালো অভ্যাস তৈরি করা যায়, তবে দীর্ঘমেয়াদে তা বিশাল ফলাফল বয়ে আনে।', link: 'https://jamesclear.com/atomic-habits' },
+  { id: '2', title: 'Deep Work', author: 'Cal Newport', category: 'Focus', description: 'তীব্র মনোযোগ দিয়ে গভীর কাজ করার কলাকৌশল, যা আপনাকে আধুনিক বিভ্রান্তিকর দুনিয়ায় অনন্য করে তুলবে।', link: 'https://calnewport.com/books/deep-work/' },
+  { id: '3', title: 'Mindset', author: 'Carol Dweck', category: 'Psychology', description: 'যে ধরণের মানসিকতা আপনার মেধার বিকাশ ও সফলতার গতিপথ বদলে দিতে পারে।', link: 'https://mindsetonline.com/' },
+  { id: '4', title: 'The Psychology of Money', author: 'Morgan Housel', category: 'Money', description: 'টাকার সাথে মানুষের সম্পর্কের মনস্তাত্ত্বিক দিকগুলো এবং কীভাবে সম্পদ গড়তে হয় তার সহজ পাঠ।', link: 'https://www.housel.com/the-psychology-of-money' }
+];
+
+const LibraryContent = ({ onSummarize }: { onSummarize: (text: string) => void }) => (
+  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+    {BOOKS.map(book => (
+      <div key={book.id} className="card-premium p-4 rounded-xl border border-[var(--color-glass-border)] flex flex-col h-full">
+        <div className="flex items-center gap-2 mb-2">
+           <div className="w-8 h-8 rounded-lg bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] flex items-center justify-center">
+             <BookOpen size={14} className="text-[var(--color-orbit-accent)]" />
+           </div>
+           <span className="text-[9px] font-bold text-[var(--color-orbit-accent)] uppercase tracking-widest leading-tight">{book.category}</span>
+        </div>
+        <h3 className="text-[14px] font-bold text-[var(--color-orbit-text-primary)] mb-1 leading-snug line-clamp-2">{book.title}</h3>
+        <p className="text-[11px] text-[var(--color-orbit-text-secondary)] italic mb-2">{book.author}</p>
+        <p className="text-[12px] text-[var(--color-orbit-text-secondary)] mb-4 line-clamp-3 flex-1 leading-relaxed">{book.description}</p>
+        <div className="flex flex-col gap-2 mt-auto">
+          <button onClick={() => window.open(book.link, '_blank')} className="text-[11px] py-1.5 font-bold bg-[var(--color-orbit-bg)] rounded-md border border-[var(--color-glass-border)] text-[var(--color-orbit-text-primary)] hover:border-[var(--color-orbit-accent)] transition-colors w-full text-center">বিস্তারিত পড়ুন</button>
+          <button 
+            onClick={() => {
+              onSummarize(`Please summarize this book in Bangla (title, author, description):\n\nBook: ${book.title}\nAuthor: ${book.author}\nDescription: ${book.description}`);
+            }}
+            className="text-[11px] py-1.5 font-bold bg-[var(--color-orbit-accent)]/10 text-[var(--color-orbit-accent)] rounded-md hover:bg-[var(--color-orbit-accent)]/20 transition-colors w-full flex items-center justify-center gap-1.5"
+          >
+            <Sparkles size={11} /> এআই সামারি
+          </button>
+        </div>
+      </div>
+    ))}
+  </div>
+);
+
+interface MediaItem {
+  id: string;
+  type: 'image' | 'video';
+  url: string;
+  name: string;
+}
+
+const StudioContent = () => {
+  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const newItems: MediaItem[] = [];
+      Array.from(e.target.files).forEach((file: File) => {
+        const url = URL.createObjectURL(file);
+        newItems.push({
+          id: Math.random().toString(36).substr(2, 9),
+          type: file.type.startsWith('video/') ? 'video' : 'image',
+          url,
+          name: file.name
+        });
+      });
+      setMediaItems(prev => [...prev, ...newItems]);
+    }
+  };
+
+  const removeMedia = (id: string) => {
+    setMediaItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="card-premium p-6 rounded-2xl border border-[var(--color-glass-border)] flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-[var(--color-orbit-text-primary)] mb-1 flex items-center gap-2">
+            <Video size={20} className="text-[var(--color-orbit-accent)]" /> 
+            My Studio Gallery
+          </h2>
+          <p className="text-[13px] text-[var(--color-orbit-text-secondary)]">
+            আপনার নিজের তোলা ছবি বা ভিডিওগুলো এখানে সেভ করে রাখতে পারেন।
+          </p>
+        </div>
+        <div>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            className="hidden" 
+            accept="image/*,video/*" 
+            multiple 
+            onChange={handleFileUpload} 
+          />
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="px-4 py-2.5 bg-[var(--color-orbit-accent)] text-white hover:opacity-90 active:scale-95 transition-all rounded-xl font-bold text-[13px] flex items-center gap-2 shadow-sm"
+          >
+            <Plus size={16} /> অ্যাড ফাইল
+          </button>
+        </div>
+      </div>
+
+      {mediaItems.length === 0 ? (
+        <div className="card-premium p-12 rounded-2xl border border-[var(--color-glass-border)] flex flex-col items-center justify-center text-center">
+          <div className="w-16 h-16 rounded-2xl bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] flex items-center justify-center mb-4">
+            <Video size={24} className="text-[var(--color-orbit-text-secondary)]/50" />
+          </div>
+          <h3 className="text-[16px] font-bold text-[var(--color-orbit-text-primary)] mb-2">স্টুডিও একদম ফাঁকা!</h3>
+          <p className="text-[13px] text-[var(--color-orbit-text-secondary)] max-w-sm mb-6">
+            উপরে "অ্যাড ফাইল" বাটনে ক্লিক করে আপনার ডিভাইস থেকে যেকোনো ফটো বা ভিডিও এখানে আপলোড করুন।
+          </p>
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="px-6 py-3 bg-[var(--color-orbit-bg)] border border-[var(--color-glass-border)] text-[var(--color-orbit-text-primary)] hover:border-[var(--color-orbit-accent)] rounded-xl font-bold text-[13px] transition-all flex items-center gap-2"
+          >
+            <Plus size={16} className="text-[var(--color-orbit-accent)]" /> 
+            ফাইল খুঁজুন
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
+          {mediaItems.map(item => (
+            <div key={item.id} className="relative group card-premium rounded-xl overflow-hidden border border-[var(--color-glass-border)] p-2">
+               <div className="aspect-video w-full rounded-lg overflow-hidden bg-[var(--color-orbit-bg)] relative">
+                 {item.type === 'video' ? (
+                   <video 
+                     src={item.url} 
+                     controls 
+                     className="w-full h-full object-contain bg-black"
+                   />
+                 ) : (
+                   <img 
+                     src={item.url} 
+                     alt={item.name} 
+                     className="w-full h-full object-cover" 
+                   />
+                 )}
+                 
+                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                   <button
+                     onClick={() => removeMedia(item.id)}
+                     className="w-8 h-8 flex items-center justify-center bg-red-500/80 backdrop-blur-md rounded-lg text-white hover:bg-red-500 transition-colors"
+                   >
+                     <Trash2 size={14} />
+                   </button>
+                 </div>
+               </div>
+               <div className="mt-2 px-1">
+                 <p className="text-[12px] font-bold text-[var(--color-orbit-text-primary)] truncate" title={item.name}>
+                   {item.name}
+                 </p>
+                 <span className="text-[10px] text-[var(--color-orbit-text-secondary)] uppercase tracking-wider font-bold">
+                   {item.type}
+                 </span>
+               </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -1201,7 +1623,8 @@ const MobileNav = ({ activeTab, setActiveTab }: { activeTab: string, setActiveTa
     { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
     { id: 'routine', label: 'Routine', icon: Calendar },
     { id: 'vault', label: 'Vault', icon: Library },
-    { id: 'settings', label: 'Set.', icon: Settings },
+    { id: 'library', label: 'Books', icon: BookOpen },
+    { id: 'studio', label: 'Studio', icon: Video },
   ];
 
   return (
@@ -1225,7 +1648,7 @@ const MobileNav = ({ activeTab, setActiveTab }: { activeTab: string, setActiveTa
   );
 };
 
-const MobileHeader = ({ isLightMode, toggleTheme }: { isLightMode: boolean, toggleTheme: () => void }) => (
+const MobileHeader = ({ isLightMode, toggleTheme, userName, streak, setActiveTab }: { isLightMode: boolean, toggleTheme: () => void, userName: string, streak: number, setActiveTab: (tab: string) => void }) => (
   <header className="md:hidden flex justify-between items-center px-4 py-3 nav-header fixed top-0 left-0 w-full z-[80]">
     <div className="flex items-center gap-2 card-premium p-2 px-3">
       <div className="w-5 h-5 rounded-[5px] bg-[var(--color-orbit-accent)] flex items-center justify-center p-1 shadow-sm">
@@ -1241,9 +1664,7 @@ const MobileHeader = ({ isLightMode, toggleTheme }: { isLightMode: boolean, togg
       >
         {isLightMode ? <Moon size={16} /> : <Sun size={16} />}
       </button>
-      <div className="w-9 h-9 rounded-full card-premium shadow-sm flex items-center justify-center text-[var(--color-orbit-text-secondary)]">
-        <User size={16} />
-      </div>
+      <UserProfileMenu userName={userName} streak={streak} setActiveTab={setActiveTab} />
     </div>
   </header>
 );
@@ -1275,6 +1696,20 @@ export default function App() {
   const [gratitude, setGratitude] = useState(() => JSON.parse(localStorage.getItem('orbit-gratitude') || '["","",""]'));
   const [streak, setStreak] = useState(() => parseInt(localStorage.getItem('orbit-streak') || '0'));
   const [streakDate, setStreakDate] = useState(() => localStorage.getItem('orbit-streak-date') || '');
+  const [exercise, setExercise] = useState(() => {
+    const saved = JSON.parse(localStorage.getItem('orbit-exercise') || '{"completed": false, "date": ""}');
+    const today = new Date().toDateString();
+    return saved.date === today ? saved : { completed: false, date: today };
+  });
+  
+  useEffect(() => {
+    localStorage.setItem('orbit-exercise', JSON.stringify(exercise));
+  }, [exercise]);
+  
+  const toggleExercise = () => {
+    const today = new Date().toDateString();
+    setExercise({ completed: !exercise.completed, date: today });
+  };
   
   useEffect(() => {
     localStorage.setItem('orbit-salah', JSON.stringify(salah));
@@ -1292,30 +1727,95 @@ export default function App() {
     }
   }, [priorities, streakDate]);
 
-  const [isSoundEnabled, setIsSoundEnabled] = useState(true);
-  const [isConfettiEnabled, setIsConfettiEnabled] = useState(true);
+  const [isSoundEnabled, setIsSoundEnabled] = useState(() => localStorage.getItem('orbit-sound-enabled') !== 'false');
+  const [isConfettiEnabled, setIsConfettiEnabled] = useState(() => localStorage.getItem('orbit-confetti-enabled') !== 'false');
+  const [successSound, setSuccessSound] = useState(() => localStorage.getItem('orbit-success-sound') || 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+
+  const [wisdomSlides, setWisdomSlides] = useState(() => {
+    const saved = localStorage.getItem('orbit-wisdom-slides');
+    return saved ? JSON.parse(saved) : DEFAULT_WISDOM_SLIDES;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('orbit-wisdom-slides', JSON.stringify(wisdomSlides));
+  }, [wisdomSlides]);
 
   const [routines, setRoutines] = useState<RoutineData[]>(() => {
-    const saved = localStorage.getItem('orbit-routines');
-    return saved ? JSON.parse(saved) : [
-      { id: 1, title: 'তাহাজ্জুদ, ফজরের সালাত ও কুরআন তিলাওয়াত', meta: 'ভোর ৫:০০ - প্রশান্তির শুরু', completed: true },
+    const saved = JSON.parse(localStorage.getItem('orbit-routines') || '[]');
+    const today = new Date().toDateString();
+    
+    // Default data if no saved data
+    const defaultData = [
+      { id: 1, title: 'তাহাজ্জুদ, ফজরের সালাত ও কুরআন তিলাওয়াত', meta: 'ভোর ৫:০০ - প্রশান্তির শুরু', completed: false },
       { id: 2, title: 'সকালের শরীরচর্চা ও স্বাস্থ্যকর নাস্তা', meta: 'সকাল ৭:৩০ - এনার্জি বুস্ট', completed: false },
       { id: 3, title: 'দিনের সবচেয়ে গুরুত্বপূর্ণ কাজ (Deep Work)', meta: 'সকাল ৯:০০ - ফোকাস সেশন', completed: false },
       { id: 4, title: 'নতুন স্কিল শেখা বা বই পড়া', meta: 'বিকেল ৪:০০ - নলেজ আপগ্রেড', completed: false },
       { id: 5, title: 'এশার সালাত ও সারাদিনের মূল্যায়ন', meta: 'রাত ৯:০০ - রুটিন চেক', completed: false },
     ];
+    
+    const data = saved.length > 0 ? saved : defaultData;
+    const lastDate = localStorage.getItem('orbit-routines-date');
+    
+    if (lastDate !== today) {
+       localStorage.setItem('orbit-routines-date', today);
+       return data.map((r: any) => ({ ...r, completed: false }));
+    }
+    return data;
   });
 
   const [resources, setResources] = useState<Resource[]>(() => {
-    const saved = localStorage.getItem('orbit-resources');
-    return saved ? JSON.parse(saved) : [
-      { id: 1, title: 'Modern UI/UX Patterns', category: 'Graphic Design', tags: ['#inspiration', '#ui'], thumbnail: 'https://picsum.photos/seed/ui/400/300' },
-      { id: 2, title: 'React Performance Tips', category: 'Dev', tags: ['#react', '#performance'], thumbnail: 'https://picsum.photos/seed/dev/400/300' },
-      { id: 3, title: 'Cinema 4D Rendering', category: 'Graphic Design', tags: ['#3d', '#motion'], thumbnail: 'https://picsum.photos/seed/3d/400/300' },
-      { id: 4, title: 'Color Grading Masterclass', category: 'Video Editing', tags: ['#video', '#tutorial'], thumbnail: 'https://picsum.photos/seed/video/400/300' },
-      { id: 5, title: 'TypeScript Best Practices', category: 'Dev', tags: ['#ts', '#clean-code'], thumbnail: 'https://picsum.photos/seed/ts/400/300' },
-      { id: 6, title: 'Logotype Grid Systems', category: 'Graphic Design', tags: ['#branding', '#logo'], thumbnail: 'https://picsum.photos/seed/logo/400/300' },
+    const saved = localStorage.getItem('orbit-resources-v5');
+    let baseResources = [
+      { id: 1, title: 'Google Trends', category: 'Business', tags: ['#trends', '#research'], thumbnail: 'https://picsum.photos/seed/googletrends/400/300', url: 'https://trends.google.com', description: 'আন্দাজে কোনো বিজনেস শুরু করবেন না। এখানে গিয়ে দেখুন বর্তমানে মানুষ কোন জিনিসটি নিয়ে বেশি সার্চ করছে।' },
+      { id: 2, title: 'Google Keyword Planner', category: 'Business', tags: ['#seo', '#keywords'], thumbnail: 'https://picsum.photos/seed/googlekeywords/400/300', url: 'https://ads.google.com/aw/keywordplanner', description: 'মানুষ ঠিক কোন শব্দগুলো লিখে গুগলে সার্চ দেয় এবং বড় বড় কোম্পানিগুলো সেই সব শব্দের পেছনে কত টাকা খরচ করে তা এখান থেকে জানা যায়।' },
+      { id: 3, title: 'Google Alerts', category: 'Productivity', tags: ['#monitoring', '#news'], thumbnail: 'https://picsum.photos/seed/googlealerts/400/300', url: 'https://google.com/alerts', description: 'আপনার কম্পিটিটররা কী করছে বা আপনার ইন্ডাস্ট্রি নিয়ে নতুন কী নিউজ আসছে তা জানার জন্য এটি সেরা।' },
+      { id: 4, title: 'Google Sites', category: 'Web', tags: ['#nocode', '#website'], thumbnail: 'https://picsum.photos/seed/googlesites/400/300', url: 'https://sites.google.com', description: 'কোনো কোডিং ছাড়াই মাত্র ১০ মিনিটে নিজের জন্য একটি প্রফেশনাল ওয়েবসাইট বা পোর্টফোলিও বানিয়ে ফেলুন।' },
+      { id: 5, title: 'Google Analytics', category: 'Analytics', tags: ['#data', '#traffic'], thumbnail: 'https://picsum.photos/seed/googleanalytics/400/300', url: 'https://analytics.google.com', description: 'আপনার ওয়েবসাইটে কতজন মানুষ আসছে, তারা কোন দেশ থেকে দেখছে এবং কতক্ষণ থাকছে সব ডেটা এখান থেকে নিখুঁতভাবে পাওয়া যায়।' },
+      { id: 6, title: 'Google Drive', category: 'Productivity', tags: ['#storage', '#collaboration'], thumbnail: 'https://picsum.photos/seed/googledrive/400/300', url: 'https://drive.google.com', description: 'আপনার অফিসের সব ফাইল অনলাইনে সেভ করে রাখুন এবং যেকোনো জায়গা থেকে টিম নিয়ে কাজ করুন।' },
+      { id: 7, title: 'Google Business Profile', category: 'Business', tags: ['#local', '#maps'], thumbnail: 'https://picsum.photos/seed/googlebusiness/400/300', url: 'https://google.com/business', description: 'গুগল ম্যাপে আপনার বিজনেস শো করানোর জন্য এটি সবচেয়ে কার্যকর টুল।' },
+      { id: 8, title: 'Google Search Console', category: 'Analytics', tags: ['#seo', '#ranking'], thumbnail: 'https://picsum.photos/seed/googlesearch/400/300', url: 'https://search.google.com/search-console', description: 'আপনার ওয়েবসাইট গুগলে ঠিকমতো র্যাংক করছে কি না এবং মানুষ কোন কি-ওয়ার্ড লিখে আপনার সাইটে আসছে তা এখান থেকে মনিটর করা যায়।' },
+      { id: 9, title: 'Google Merchant Center', category: 'Business', tags: ['#ecommerce', '#shopping'], thumbnail: 'https://picsum.photos/seed/googlemerchant/400/300', url: 'https://merchants.google.com', description: 'আপনার অনলাইন শপ বা ই-কমার্স প্রোডাক্টগুলো ফ্রিতে গুগল শপিং সেকশনে লিস্টিং করার জন্য এটি ব্যবহার করুন।' },
+      { id: 10, title: 'Google Apps Script', category: 'Development', tags: ['#automation', '#coding'], thumbnail: 'https://picsum.photos/seed/googleapps/400/300', url: 'https://script.google.com', description: 'আপনার বিজনেসের ছোটখাটো অনেক কাজ অটোমেট করে ফেলুন।' },
+      { id: 11, title: 'Looker Studio', category: 'Analytics', tags: ['#dashboard', '#dataviz'], thumbnail: 'https://picsum.photos/seed/looker/400/300', url: 'https://lookerstudio.google.com', description: 'ডেটাকে সুন্দর গ্রাফ বা ড্যাশবোর্ড আকারে ক্লায়েন্টদের প্রেজেন্ট করার জন্য এটি সেরা।' },
+      { id: 12, title: 'Google Forms', category: 'Productivity', tags: ['#feedback', '#surveys'], thumbnail: 'https://picsum.photos/seed/googleforms/400/300', url: 'https://forms.google.com', description: 'কাস্টমারের ফিডব্যাক নেওয়া বা নতুন কাস্টমারের ইমেইল কালেক্ট করার জন্য এটি একটি লিড জেনারেশন মেশিন।' },
+      { id: 13, title: 'Google Cloud Vision AI', category: 'AI', tags: ['#vision', '#machinelearning'], thumbnail: 'https://picsum.photos/seed/visionai/400/300', url: 'https://cloud.google.com/vision', description: 'এটি গুগলের একটি পাওয়ারফুল এআই যা ইমেজ থেকে টেক্সট এক্সট্রাক্ট করতে পারে বা ছবি চিনতে পারে।' },
+      { id: 14, title: 'Google Workspace', category: 'Productivity', tags: ['#email', '#branding'], thumbnail: 'https://picsum.photos/seed/googleworkspace/400/300', url: 'https://workspace.google.com', description: 'নিজের পার্সোনাল ব্রান্ডিং মজবুত করতে প্রফেশনাল ইমেইল তৈরি করার জন্য এটি বেস্ট ফাউন্ডেশন।' },
+      { id: 15, title: 'ChatGPT', category: 'AI', tags: ['#chatbot', '#writing', '#coding'], thumbnail: 'https://picsum.photos/seed/chatgpt/400/300', url: 'https://chatgpt.com', description: 'যেকোনো প্রশ্নের উত্তর, লেখালেখি, কোডিং বা আইডিয়া জেনারেট করার জন্য সবচেয়ে জনপ্রিয় এআই।' },
+      { id: 16, title: 'Claude AI', category: 'AI', tags: ['#reasoning', '#writing', '#analysis'], thumbnail: 'https://picsum.photos/seed/claudeai/400/300', url: 'https://claude.ai', description: 'বড় ডকুমেন্ট পড়া, সামারি করা বা মানুষের মতো ন্যাচারাল লেখালেখির জন্য দারুণ।' },
+      { id: 17, title: 'Google Gemini', category: 'AI', tags: ['#search', '#workspace', '#multimodal'], thumbnail: 'https://picsum.photos/seed/googlegemini/400/300', url: 'https://gemini.google.com', description: 'গুগলের নিজস্ব এআই। রিয়েল-টাইম ইন্টারনেট সার্চ এবং গুগল ডকস/জিমেইলের সাথে ইন্টিগ্রেশনের জন্য সেরা।' },
+      { id: 18, title: 'Perplexity AI', category: 'AI', tags: ['#research', '#searchengine', '#citations'], thumbnail: 'https://picsum.photos/seed/perplexity/400/300', url: 'https://perplexity.ai', description: 'এআই সার্চ ইঞ্জিন। যেকোনো টপিক নিয়ে রিসার্চ করতে এবং সোর্স বা রেফারেন্সসহ উত্তর পেতে এটি গুগলের চেয়েও কার্যকর।' },
+      { id: 19, title: 'Leonardo AI', category: 'AI', tags: ['#imagegen', '#design', '#art'], thumbnail: 'https://picsum.photos/seed/leonardo/400/300', url: 'https://leonardo.ai', description: 'টেক্সট থেকে দারুণ সব ছবি তৈরি করার জন্য বেস্ট এবং প্রতিদিন ফ্রিতে অনেক টোকেন পাওয়া যায়।' },
+      { id: 20, title: 'Gamma App', category: 'AI', tags: ['#presentation', '#slides', '#design'], thumbnail: 'https://picsum.photos/seed/gamma/400/300', url: 'https://gamma.app', description: 'শুধু একটি টপিক লিখে দিলে এটি কয়েক সেকেন্ডের মধ্যে সুন্দর স্লাইড বা প্রেজেন্টেশন বানিয়ে দেয়।' },
+      { id: 21, title: 'Hugging Face', category: 'AI', tags: ['#opensouce', '#models', '#hub'], thumbnail: 'https://picsum.photos/seed/huggingface/400/300', url: 'https://huggingface.co/chat', description: 'এটি এআই এর ওপেন-সোর্স হাব। এখানে অনেক ফ্রি মডেল (যেমন Llama) ব্যবহার করে নানা ধরনের কাজ করা যায়।' },
+      { id: 22, title: 'Full Stack Web Development (MERN)', category: 'Development', tags: ['#coding', '#react', '#nodejs'], thumbnail: 'https://picsum.photos/seed/mern/400/300', url: 'https://react.dev', description: 'জাভাস্ক্রিপ্ট বেইসড ওয়েব অ্যাপ বানানো। রিমোট জব এবং লোকাল মার্কেটপ্লেসে প্রচুর ডিমান্ড।' },
+      { id: 23, title: 'AI & Prompt Engineering', category: 'AI', tags: ['#prompting', '#ai', '#automation'], thumbnail: 'https://picsum.photos/seed/aiprompt/400/300', url: 'https://learnprompting.org/', description: 'এআই কে দিয়ে সঠিকভাবে কাজ করিয়ে নেওয়ার স্কিল। আগামীতে সব অফিসেই এটি লাগবে।' },
+      { id: 24, title: 'Digital Marketing & SEO', category: 'Business', tags: ['#marketing', '#seo', '#growth'], thumbnail: 'https://picsum.photos/seed/digitalmarketing/400/300', url: 'https://learndigital.withgoogle.com/digitalgarage', description: 'কোম্পানির প্রোডাক্ট মানুষের কাছে পৌঁছানো এবং গুগলে ওয়েবসাইট র‍্যাংক করা। ছোট-বড় সব ব্যবসার জন্য আবশ্যক।' },
+      { id: 25, title: 'Graphic & UI/UX Design', category: 'Web', tags: ['#design', '#figma', '#creative'], thumbnail: 'https://picsum.photos/seed/uiux/400/300', url: 'https://www.figma.com/', description: 'অ্যাপ বা ওয়েবসাইটের ডিজাইন কেমন হবে তা তৈরি করা। ফ্রিল্যান্সিংয়ে সবসময় এটির চাহিদা থাকে।' },
+      { id: 26, title: 'Data Analysis & SQL', category: 'Analytics', tags: ['#data', '#sql', '#python'], thumbnail: 'https://picsum.photos/seed/data/400/300', url: 'https://www.kaggle.com/', description: 'ডেটা থেকে ব্যবসার দরকারি ইনফরমেশন বের করা। কর্পোরেট জবে এর অনেক দাম।' },
+      { id: 27, title: 'Video Editing & Motion Graphics', category: 'Productivity', tags: ['#video', '#premierepro', '#content'], thumbnail: 'https://picsum.photos/seed/videoedit/400/300', url: 'https://www.blackmagicdesign.com/products/davinciresolve', description: 'ইউটিউব, রিলস আর টিকটকের যুগে ভিডিও এডিটরের ডিমান্ড এখন আকাশচুম্বী।' },
+      { id: 28, title: 'Cybersecurity & Ethical Hacking', category: 'Development', tags: ['#security', '#hacking', '#network'], thumbnail: 'https://picsum.photos/seed/cyber/400/300', url: 'https://www.cybrary.it/', description: 'ডিজিটাল যুগে হ্যাকারদের থেকে কোম্পানির ডেটা বাঁচানোর পেশা। দিন দিন এর চাহিদা বাড়ছে।' },
+      { id: 29, title: 'Learning How to Learn', category: 'Productivity', tags: ['#learning', '#meta-skill', '#focus'], thumbnail: 'https://picsum.photos/seed/learning/400/300', url: 'https://www.coursera.org/learn/learning-how-to-learn', description: 'নতুন কিছু দ্রুত শেখার এবং মস্তিষ্কের সঠিক ব্যবহারের বৈজ্ঞানিক পদ্ধতি। এটি সব স্কিলের মূল ভিত্তি!' },
+      { id: 30, title: 'English Communication', category: 'Productivity', tags: ['#english', '#communication', '#language'], thumbnail: 'https://picsum.photos/seed/english/400/300', url: 'https://www.bbc.co.uk/learningenglish/', description: 'গ্লোবাল মার্কেটে কাজ করতে এবং নতুন স্কিল শিখতে ইংরেজি শেখার কোনো বিকল্প নেই। এটি আপনার ক্যারিয়ারের সবচেয়ে বড় ইনভেস্টমেন্ট।' }
     ];
+
+    if (saved) {
+      baseResources = JSON.parse(saved);
+    }
+
+    const hasPlaylist = baseResources.some((r: Resource) => r.url?.includes('PLJofX6IsbYkAUKElj-Kbt12TQeRb1Kzua'));
+    if (!hasPlaylist) {
+      baseResources.unshift({
+        id: Date.now() + Math.random(),
+        title: 'উদ্যোক্তা মাস্টারক্লাস | Uddokta MasterClass',
+        category: 'Business',
+        tags: ['#masterclass', '#entrepreneurship'],
+        thumbnail: 'https://image.thum.io/get/width/400/crop/600/https://youtube.com/playlist?list=PLJofX6IsbYkAUKElj-Kbt12TQeRb1Kzua',
+        url: 'https://youtube.com/playlist?list=PLJofX6IsbYkAUKElj-Kbt12TQeRb1Kzua&si=N3UUfdXSNJkOxwqX',
+        description: 'Unlock the minds of the world’s best entrepreneurs through powerful insights from top business books.'
+      });
+    }
+
+    return baseResources;
   });
 
   const togglePriority = (id: number) => {
@@ -1325,7 +1825,8 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
 
   const playZenDing = () => {
-    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+    if (!isSoundEnabled) return;
+    const audio = new Audio(successSound);
     audio.volume = 0.4;
     audio.play().catch(() => {});
   };
@@ -1348,12 +1849,23 @@ export default function App() {
   };
 
   const handleAddResource = (data: any) => {
+    let finalThumbnail = data.thumbnail?.trim();
+    if (!finalThumbnail) {
+      if (data.url && data.url.trim().length > 0) {
+        finalThumbnail = `https://image.thum.io/get/width/400/crop/600/${encodeURI(data.url)}`;
+      } else {
+        finalThumbnail = `https://picsum.photos/seed/${encodeURIComponent(data.title || 'orbit')}/400/300`;
+      }
+    }
+
     const newRes: Resource = {
       id: Date.now(),
       title: data.title || 'Untitled Asset',
       category: data.category,
-      tags: data.tags.split(' ').filter((t: string) => t.startsWith('#')),
-      thumbnail: `https://picsum.photos/seed/${data.title}/400/300`
+      tags: data.tags?.split(' ').filter((t: string) => t.startsWith('#')) || [],
+      thumbnail: finalThumbnail,
+      url: data.url,
+      description: data.description
     };
     setResources(prev => [newRes, ...prev]);
   };
@@ -1373,16 +1885,19 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('orbit-priorities', JSON.stringify(priorities));
     localStorage.setItem('orbit-routines', JSON.stringify(routines));
-    localStorage.setItem('orbit-resources', JSON.stringify(resources));
+    localStorage.setItem('orbit-resources-v5', JSON.stringify(resources));
     localStorage.setItem('orbit-user', userName);
     localStorage.setItem('orbit-theme', isLightMode ? 'light' : 'dark');
+    localStorage.setItem('orbit-sound-enabled', String(isSoundEnabled));
+    localStorage.setItem('orbit-confetti-enabled', String(isConfettiEnabled));
+    localStorage.setItem('orbit-success-sound', successSound);
     
     if (isLightMode) {
       document.body.classList.add('light-mode');
     } else {
       document.body.classList.remove('light-mode');
     }
-  }, [priorities, routines, resources, userName, isLightMode]);
+  }, [priorities, routines, resources, userName, isLightMode, isSoundEnabled, isConfettiEnabled, successSound]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -1405,7 +1920,7 @@ export default function App() {
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} userName={userName} />
 
       <main className="flex-1 flex flex-col relative overflow-y-auto z-10 p-6 md:p-12 max-w-[1400px] mx-auto w-full pt-20 md:pt-12 pb-32 md:pb-12 scrollbar-hide">
-        <MobileHeader isLightMode={isLightMode} toggleTheme={toggleTheme} />
+        <MobileHeader isLightMode={isLightMode} toggleTheme={toggleTheme} userName={userName} streak={streak} setActiveTab={setActiveTab} />
 
         <header className="hidden md:flex justify-between items-start mb-12 card-premium p-6">
           <div>
@@ -1433,6 +1948,7 @@ export default function App() {
             >
               {isLightMode ? <Moon size={18} /> : <Sun size={18} />}
             </button>
+            <UserProfileMenu userName={userName} streak={streak} setActiveTab={setActiveTab} />
             <button 
               onClick={() => setIsCommandOpen(true)}
               className="px-5 py-2.5 bg-[var(--color-orbit-card)] hover:border-[var(--color-orbit-accent)] border border-[var(--color-glass-border)] text-[var(--color-orbit-text-primary)] rounded-xl text-[13px] font-bold transition-all flex items-center gap-2 group shadow-[var(--shadow-card)]"
@@ -1462,6 +1978,9 @@ export default function App() {
               gratitude={gratitude}
               setGratitude={setGratitude}
               streak={streak}
+              exercise={exercise}
+              setExercise={setExercise}
+              wisdomSlides={wisdomSlides}
             />
           ) : 
            activeTab === 'vault' ? (
@@ -1479,6 +1998,17 @@ export default function App() {
                toggleRoutine={toggleRoutine} 
                deleteRoutine={deleteRoutine}
              />
+           ) : activeTab === 'library' ? (
+             <div className="p-4 sm:p-6">
+               <LibraryContent 
+                 onSummarize={(text) => {
+                   setSummarizerContext(text);
+                   setIsSummarizerOpen(true);
+                 }}
+               />
+             </div>
+           ) : activeTab === 'studio' ? (
+             <div className="p-4 sm:p-6"><StudioContent /></div>
            ) : activeTab === 'settings' ? (
              <SettingsContent 
                userName={userName}
@@ -1494,6 +2024,10 @@ export default function App() {
                isLightMode={isLightMode}
                setIsLightMode={setIsLightMode}
                setToast={setToast}
+               wisdomSlides={wisdomSlides}
+               setWisdomSlides={setWisdomSlides}
+               successSound={successSound}
+               setSuccessSound={setSuccessSound}
              />
            ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center py-20">
